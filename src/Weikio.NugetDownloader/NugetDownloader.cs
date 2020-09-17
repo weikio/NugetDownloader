@@ -33,29 +33,13 @@ namespace Weikio.NugetDownloader
         public async Task<string[]> DownloadAsync(string packageFolder, string packageName, string packageVersion = null, bool includePrerelease = false,
             NuGetFeed packageFeed = null, bool onlyDownload = false)
         {
-            if (!Directory.Exists(packageFolder))
-            {
-                Directory.CreateDirectory(packageFolder);
-            }
+            IPackageSearchMetadata package = null;
+            SourceRepository sourceRepo = null;
 
             var providers = GetNugetResourceProviders();
             var settings = Settings.LoadDefaultSettings(packageFolder, null, new MachineWideSettings());
             var packageSourceProvider = new PackageSourceProvider(settings);
             var sourceRepositoryProvider = new SourceRepositoryProvider(packageSourceProvider, providers);
-
-            var dotNetFramework = Assembly
-                .GetEntryAssembly()
-                .GetCustomAttribute<TargetFrameworkAttribute>()?
-                .FrameworkName;
-
-            var frameworkNameProvider = new FrameworkNameProvider(
-                new[] { DefaultFrameworkMappings.Instance },
-                new[] { DefaultPortableFrameworkMappings.Instance });
-
-            var nuGetFramework = NuGetFramework.ParseFrameworkName(dotNetFramework, frameworkNameProvider);
-
-            IPackageSearchMetadata package = null;
-            SourceRepository sourceRepo = null;
 
             if (!string.IsNullOrWhiteSpace(packageFeed?.Feed))
             {
@@ -88,50 +72,7 @@ namespace Weikio.NugetDownloader
                 throw new PackageNotFoundException($"Couldn't find package '{packageVersion}'.{packageVersion}.");
             }
 
-            var project = new PluginFolderNugetProject(packageFolder, package, nuGetFramework, onlyDownload);
-            var packageManager = new NuGetPackageManager(sourceRepositoryProvider, settings, packageFolder) { PackagesFolderNuGetProject = project };
-
-            var clientPolicyContext = ClientPolicyContext.GetClientPolicy(settings, _logger);
-
-            var projectContext = new FolderProjectContext(_logger)
-            {
-                PackageExtractionContext = new PackageExtractionContext(
-                    PackageSaveMode.Defaultv2,
-                    PackageExtractionBehavior.XmlDocFileSaveMode,
-                    clientPolicyContext,
-                    _logger)
-            };
-
-            var resolutionContext = new ResolutionContext(
-                DependencyBehavior.Lowest,
-                includePrerelease,
-                includeUnlisted: false,
-                VersionConstraints.None);
-
-            var downloadContext = new PackageDownloadContext(
-                resolutionContext.SourceCacheContext,
-                packageFolder,
-                resolutionContext.SourceCacheContext.DirectDownload);
-
-            // We are waiting here instead of await as await actually doesn't seem to work correctly.
-            packageManager.InstallPackageAsync(
-                project,
-                package.Identity,
-                resolutionContext,
-                projectContext,
-                downloadContext,
-                sourceRepo,
-                new List<SourceRepository>(),
-                CancellationToken.None).Wait();
-
-            if (onlyDownload)
-            {
-                var versionFolder = Path.Combine(packageFolder, package.Identity.ToString());
-
-                return Directory.GetFiles(versionFolder, "*.*", SearchOption.AllDirectories);
-            }
-
-            return await project.GetPluginAssemblyFilesAsync();
+            return await DownloadAsync(package, sourceRepo, packageFolder, onlyDownload);
         }
 
         public async Task<string[]> DownloadAsync(IPackageSearchMetadata packageIdentity, SourceRepository repository,
@@ -194,9 +135,14 @@ namespace Weikio.NugetDownloader
                 new List<SourceRepository>(),
                 CancellationToken.None);
 
-            var versionFolder = Path.Combine(downloadFolder, packageIdentity.Identity.ToString());
+            if (onlyDownload)
+            {
+                var versionFolder = Path.Combine(downloadFolder, packageIdentity.Identity.ToString());
 
-            return Directory.GetFiles(versionFolder, "*.*", SearchOption.AllDirectories);
+                return Directory.GetFiles(versionFolder, "*.*", SearchOption.AllDirectories);
+            }
+
+            return await project.GetPluginAssemblyFilesAsync();
         }
 
         private static List<Lazy<INuGetResourceProvider>> GetNugetResourceProviders()
@@ -252,19 +198,40 @@ namespace Weikio.NugetDownloader
 
             var repositories = sourceRepositoryProvider.GetRepositories();
 
+            var packages = GetPackages(searchTerm, maxResults, includePrerelease, repositories);
+
+            await foreach (var package in packages)
+            {
+                yield return package;
+            }
+        }
+
+        private async IAsyncEnumerable<(SourceRepository Repository, IPackageSearchMetadata Package)> GetPackages(string searchTerm,
+            int maxResults, bool includePrerelease, IEnumerable<SourceRepository> repositories)
+        {
             foreach (var repository in repositories)
             {
-                var packageSearchResource = await repository.GetResourceAsync<PackageSearchResource>();
+                PackageSearchResource packageSearchResource;
+
+                try
+                {
+                    packageSearchResource = await repository.GetResourceAsync<PackageSearchResource>();
+                }
+                catch (FatalProtocolException ex)
+                {
+                    _logger.LogError($"Failed to download package search resource: {ex}");
+                    continue;
+                }
 
                 SearchFilter searchFilter;
 
                 if (includePrerelease)
                 {
-                    searchFilter = new SearchFilter(includePrerelease, SearchFilterType.IsAbsoluteLatestVersion);
+                    searchFilter = new SearchFilter(true, SearchFilterType.IsAbsoluteLatestVersion);
                 }
                 else
                 {
-                    searchFilter = new SearchFilter(includePrerelease);
+                    searchFilter = new SearchFilter(false);
                 }
 
                 var items = await packageSearchResource.SearchAsync(searchTerm, searchFilter, 0, maxResults, _logger, CancellationToken.None);
@@ -276,28 +243,19 @@ namespace Weikio.NugetDownloader
             }
         }
 
-        public async Task<IEnumerable<(SourceRepository Repository, IPackageSearchMetadata Package)>> SearchPackagesAsync(NuGetFeed packageFeed,
+        public async IAsyncEnumerable<(SourceRepository Repository, IPackageSearchMetadata Package)> SearchPackagesAsync(NuGetFeed packageFeed,
             string searchTerm, int maxResults = 128,
             bool includePrerelease = false)
         {
             var providers = GetNugetResourceProviders();
             var sourceRepo = GetSourceRepo(packageFeed, providers);
-            var packageSearchResource = await sourceRepo.GetResourceAsync<PackageSearchResource>();
 
-            SearchFilter searchFilter;
+            var packages = GetPackages(searchTerm, maxResults, includePrerelease, new List<SourceRepository> { sourceRepo });
 
-            if (includePrerelease)
+            await foreach (var package in packages)
             {
-                searchFilter = new SearchFilter(includePrerelease, SearchFilterType.IsAbsoluteLatestVersion);
+                yield return package;
             }
-            else
-            {
-                searchFilter = new SearchFilter(includePrerelease);
-            }
-
-            var packages = await packageSearchResource.SearchAsync(searchTerm, searchFilter, 0, maxResults, _logger, CancellationToken.None);
-
-            return packages.Select(x => (sourceRepo, x));
         }
 
         private async Task<IPackageSearchMetadata> SearchPackageAsync(string packageName, string version, bool includePrerelease,
