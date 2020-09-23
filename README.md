@@ -1,25 +1,16 @@
-# Weik.io Template
+# NugetDownloader [![NuGet Version](https://img.shields.io/nuget/v/Weikio.NugetDownloader.svg?style=flat&label=Weikio.NugetDownloader)](https://www.nuget.org/packages/Weikio.NugetDownloader/)
  
-Template for Weik.io's .NET Core projects. Contains the following constructs:
-
-* Coding conventions in the format of .editorconfig.
-* Folder structure
-* Global.json
-* Git ignore
-
-This template can be used as a starting point for all the Weik.io projects.
+Tool for downloading and installing Nuget packages from .NET.
 
 ## Usage
 
-The template can be used when creating a new repository in GitHub:
+NugetDownloader is available from Nuget as a .NET Core 3.1 package:
 
-![Creating a new repository using the template](2020-08-10-13-30-31.png)
+[![NuGet Version](https://img.shields.io/nuget/v/Weikio.NugetDownloader.svg?style=flat&label=Weikio.NugetDownloader)](https://www.nuget.org/packages/Weikio.NugetDownloader/)
 
-Select Weikio/Template from the Repository teamplte dropdown.
-
-Alternatively a new repository with this template can be created from https://github.com/weikio/Template:
-
-![Creating a new repository from the template's repository](2020-08-10-13-34-18.png)
+```
+Install-Package Weikio.NugetDownloader
+```
 
 ## License
 

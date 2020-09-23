@@ -6,7 +6,7 @@
     <PackageIcon>logo_256.png</PackageIcon>
     <MinVerMinimumMajorMinor>1.0</MinVerMinimumMajorMinor>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <RepositoryUrl>https://github.com/weikio/Weikio.EventFramework</RepositoryUrl>
+    <RepositoryUrl>https://github.com/weikio/NugetDownloader</RepositoryUrl>
     <PackageProjectUrl>https://www.weik.io</PackageProjectUrl>
     <Copyright>©2020 Weik.io</Copyright>
     <LangVersion>8.0</LangVersion>
