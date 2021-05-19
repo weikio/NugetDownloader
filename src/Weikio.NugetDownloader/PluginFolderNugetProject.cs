@@ -35,7 +35,8 @@ namespace Weikio.NugetDownloader
             return await base.GetInstalledPackagesAsync(token);
         }
 
-        public override async Task<bool> InstallPackageAsync(PackageIdentity packageIdentity, DownloadResourceResult downloadResourceResult, INuGetProjectContext nuGetProjectContext, CancellationToken token)
+        public override async Task<bool> InstallPackageAsync(PackageIdentity packageIdentity, DownloadResourceResult downloadResourceResult, 
+            INuGetProjectContext nuGetProjectContext, CancellationToken token)
         {
             var result = await base.InstallPackageAsync(packageIdentity, downloadResourceResult, nuGetProjectContext, token);
 

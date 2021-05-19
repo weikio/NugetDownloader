@@ -31,7 +31,7 @@ namespace Weikio.NugetDownloader
         }
 
         public async Task<string[]> DownloadAsync(string packageFolder, string packageName, string packageVersion = null, bool includePrerelease = false,
-            NuGetFeed packageFeed = null, bool onlyDownload = false)
+            NuGetFeed packageFeed = null, bool onlyDownload = false, bool includeSecondaryRepositories = false)
         {
             if (!Directory.Exists(packageFolder))
             {
@@ -42,17 +42,6 @@ namespace Weikio.NugetDownloader
             var settings = Settings.LoadDefaultSettings(packageFolder, null, new MachineWideSettings());
             var packageSourceProvider = new PackageSourceProvider(settings);
             var sourceRepositoryProvider = new SourceRepositoryProvider(packageSourceProvider, providers);
-
-            var dotNetFramework = Assembly
-                .GetEntryAssembly()
-                .GetCustomAttribute<TargetFrameworkAttribute>()?
-                .FrameworkName;
-
-            var frameworkNameProvider = new FrameworkNameProvider(
-                new[] { DefaultFrameworkMappings.Instance },
-                new[] { DefaultPortableFrameworkMappings.Instance });
-
-            var nuGetFramework = NuGetFramework.ParseFrameworkName(dotNetFramework, frameworkNameProvider);
 
             IPackageSearchMetadata package = null;
             SourceRepository sourceRepo = null;
@@ -88,6 +77,17 @@ namespace Weikio.NugetDownloader
                 throw new PackageNotFoundException($"Couldn't find package '{packageVersion}'.{packageVersion}.");
             }
 
+            var dotNetFramework = Assembly
+                .GetEntryAssembly()
+                .GetCustomAttribute<TargetFrameworkAttribute>()?
+                .FrameworkName;
+
+            var frameworkNameProvider = new FrameworkNameProvider(
+                new[] { DefaultFrameworkMappings.Instance },
+                new[] { DefaultPortableFrameworkMappings.Instance });
+            
+            var nuGetFramework = NuGetFramework.ParseFrameworkName(dotNetFramework, frameworkNameProvider);
+
             var project = new PluginFolderNugetProject(packageFolder, package, nuGetFramework, onlyDownload);
             var packageManager = new NuGetPackageManager(sourceRepositoryProvider, settings, packageFolder) { PackagesFolderNuGetProject = project };
 
@@ -96,7 +96,7 @@ namespace Weikio.NugetDownloader
             var projectContext = new FolderProjectContext(_logger)
             {
                 PackageExtractionContext = new PackageExtractionContext(
-                    PackageSaveMode.Defaultv2,
+                    PackageSaveMode.Defaultv3,
                     PackageExtractionBehavior.XmlDocFileSaveMode,
                     clientPolicyContext,
                     _logger)
@@ -113,24 +113,34 @@ namespace Weikio.NugetDownloader
                 packageFolder,
                 resolutionContext.SourceCacheContext.DirectDownload);
 
-            // We are waiting here instead of await as await actually doesn't seem to work correctly.
-            packageManager.InstallPackageAsync(
+            var secondaryRepos = sourceRepositoryProvider.GetRepositories();
+
+            if (includeSecondaryRepositories == false)
+            {
+                secondaryRepos = new List<SourceRepository>();
+            }
+            
+            await packageManager.InstallPackageAsync(
                 project,
                 package.Identity,
                 resolutionContext,
                 projectContext,
                 downloadContext,
                 sourceRepo,
-                new List<SourceRepository>(),
-                CancellationToken.None).Wait();
+                secondaryRepos,
+                CancellationToken.None);
 
+            await project.PostProcessAsync(projectContext, CancellationToken.None);
+            await project.PreProcessAsync(projectContext, CancellationToken.None);
+            await packageManager.RestorePackageAsync(package.Identity, projectContext, downloadContext, new[] { sourceRepo }, CancellationToken.None);
+            
             if (onlyDownload)
             {
                 var versionFolder = Path.Combine(packageFolder, package.Identity.ToString());
 
                 return Directory.GetFiles(versionFolder, "*.*", SearchOption.AllDirectories);
             }
-
+            
             return await project.GetPluginAssemblyFilesAsync();
         }
 
@@ -323,14 +333,13 @@ namespace Weikio.NugetDownloader
             }
             else
             {
-                // Can't use await as we seem to lose the thread
-                var searchResults = packageMetadataResource.GetMetadataAsync(
+                var searchResults = await packageMetadataResource.GetMetadataAsync(
                     packageName,
                     includePrerelease,
                     includeUnlisted: false,
                     sourceCacheContext,
                     _logger,
-                    CancellationToken.None).Result;
+                    CancellationToken.None);
 
                 searchResults = searchResults
                     .OrderByDescending(p => p.Identity.Version);
