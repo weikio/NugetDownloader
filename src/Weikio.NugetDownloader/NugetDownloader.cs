@@ -7,6 +7,8 @@ using System.Runtime.Versioning;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.DependencyModel;
+using Newtonsoft.Json;
 using NuGet.Common;
 using NuGet.Configuration;
 using NuGet.Frameworks;
@@ -31,7 +33,7 @@ namespace Weikio.NugetDownloader
         }
 
         public async Task<string[]> DownloadAsync(string packageFolder, string packageName, string packageVersion = null, bool includePrerelease = false,
-            NuGetFeed packageFeed = null, bool onlyDownload = false, bool includeSecondaryRepositories = false)
+            NuGetFeed packageFeed = null, bool onlyDownload = false, bool includeSecondaryRepositories = false, string targetFramework = null)
         {
             if (!Directory.Exists(packageFolder))
             {
@@ -77,16 +79,19 @@ namespace Weikio.NugetDownloader
                 throw new PackageNotFoundException($"Couldn't find package '{packageVersion}'.{packageVersion}.");
             }
 
-            var dotNetFramework = Assembly
-                .GetEntryAssembly()
-                .GetCustomAttribute<TargetFrameworkAttribute>()?
-                .FrameworkName;
+            if (string.IsNullOrWhiteSpace(targetFramework))
+            {
+                targetFramework = Assembly
+                    .GetEntryAssembly()
+                    .GetCustomAttribute<TargetFrameworkAttribute>()?
+                    .FrameworkName;
+            }
 
             var frameworkNameProvider = new FrameworkNameProvider(
                 new[] { DefaultFrameworkMappings.Instance },
                 new[] { DefaultPortableFrameworkMappings.Instance });
             
-            var nuGetFramework = NuGetFramework.ParseFrameworkName(dotNetFramework, frameworkNameProvider);
+            var nuGetFramework = NuGetFramework.ParseFrameworkName(targetFramework, frameworkNameProvider);
 
             var project = new PluginFolderNugetProject(packageFolder, package, nuGetFramework, onlyDownload);
             var packageManager = new NuGetPackageManager(sourceRepositoryProvider, settings, packageFolder) { PackagesFolderNuGetProject = project };
@@ -101,7 +106,7 @@ namespace Weikio.NugetDownloader
                     clientPolicyContext,
                     _logger)
             };
-
+            
             var resolutionContext = new ResolutionContext(
                 DependencyBehavior.Lowest,
                 includePrerelease,
@@ -140,6 +145,12 @@ namespace Weikio.NugetDownloader
 
                 return Directory.GetFiles(versionFolder, "*.*", SearchOption.AllDirectories);
             }
+
+            var installedDllsJson = JsonConvert.SerializeObject(project.InstalledDlls, Formatting.Indented);
+            await File.WriteAllTextAsync(Path.Combine(packageFolder, ".dlls.deps"), installedDllsJson);
+            
+            var runtimeDllJson = JsonConvert.SerializeObject(project.RuntimeDlls, Formatting.Indented);
+            await File.WriteAllTextAsync(Path.Combine(packageFolder, ".runtime.deps"), runtimeDllJson);
             
             return await project.GetPluginAssemblyFilesAsync();
         }
