@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.InteropServices.WindowsRuntime;
 using System.Runtime.Versioning;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -32,7 +33,8 @@ namespace Weikio.NugetDownloader
             _logger = logger ?? new ConsoleLogger();
         }
 
-        public async Task<string[]> DownloadAsync(string packageFolder, string packageName, string packageVersion = null, bool includePrerelease = false,
+        public async Task<NugetDownloadResult> DownloadAsync(string packageFolder, string packageName, string packageVersion = null,
+            bool includePrerelease = false,
             NuGetFeed packageFeed = null, bool onlyDownload = false, bool includeSecondaryRepositories = false, string targetFramework = null)
         {
             if (!Directory.Exists(packageFolder))
@@ -90,7 +92,7 @@ namespace Weikio.NugetDownloader
             var frameworkNameProvider = new FrameworkNameProvider(
                 new[] { DefaultFrameworkMappings.Instance },
                 new[] { DefaultPortableFrameworkMappings.Instance });
-            
+
             var nuGetFramework = NuGetFramework.ParseFrameworkName(targetFramework, frameworkNameProvider);
 
             var project = new PluginFolderNugetProject(packageFolder, package, nuGetFramework, onlyDownload);
@@ -106,7 +108,7 @@ namespace Weikio.NugetDownloader
                     clientPolicyContext,
                     _logger)
             };
-            
+
             var resolutionContext = new ResolutionContext(
                 DependencyBehavior.Lowest,
                 includePrerelease,
@@ -124,7 +126,7 @@ namespace Weikio.NugetDownloader
             {
                 secondaryRepos = new List<SourceRepository>();
             }
-            
+
             await packageManager.InstallPackageAsync(
                 project,
                 package.Identity,
@@ -138,21 +140,36 @@ namespace Weikio.NugetDownloader
             await project.PostProcessAsync(projectContext, CancellationToken.None);
             await project.PreProcessAsync(projectContext, CancellationToken.None);
             await packageManager.RestorePackageAsync(package.Identity, projectContext, downloadContext, new[] { sourceRepo }, CancellationToken.None);
-            
+
+            var result = new NugetDownloadResult
+            {
+                Context = new NugetContext(nuGetFramework.ToString(), nuGetFramework.GetShortFolderName(), nuGetFramework.Version.ToString(), packageFolder,
+                    packageName, packageVersion)
+            };
+
             if (onlyDownload)
             {
                 var versionFolder = Path.Combine(packageFolder, package.Identity.ToString());
 
-                return Directory.GetFiles(versionFolder, "*.*", SearchOption.AllDirectories);
+                result.PackageAssemblyFiles = new List<string>(Directory.GetFiles(versionFolder, "*.*", SearchOption.AllDirectories));
+
+                return result;
             }
 
             var installedDllsJson = JsonConvert.SerializeObject(project.InstalledDlls, Formatting.Indented);
             await File.WriteAllTextAsync(Path.Combine(packageFolder, ".dlls.deps"), installedDllsJson);
-            
+
             var runtimeDllJson = JsonConvert.SerializeObject(project.RuntimeDlls, Formatting.Indented);
             await File.WriteAllTextAsync(Path.Combine(packageFolder, ".runtime.deps"), runtimeDllJson);
-            
-            return await project.GetPluginAssemblyFilesAsync();
+
+            result.InstalledDlls = new List<DllInfo>(project.InstalledDlls);
+            result.RunTimeDlls = new List<RunTimeDll>(project.RuntimeDlls);
+            result.InstalledPackages = new List<string>(project.InstalledPackages);
+
+            var packageAssemblies = await project.GetPluginAssemblyFilesAsync();
+            result.PackageAssemblyFiles = new List<string>(packageAssemblies);
+
+            return result;
         }
 
         public async Task<string[]> DownloadAsync(IPackageSearchMetadata packageIdentity, SourceRepository repository,
@@ -365,6 +382,36 @@ namespace Weikio.NugetDownloader
             }
 
             return packageMetaData;
+        }
+    }
+
+    public class NugetDownloadResult
+    {
+        public NugetContext Context { get; set; }
+        public List<string> PackageAssemblyFiles { get; set; }
+        public List<RunTimeDll> RunTimeDlls { get; set; }
+        public List<DllInfo> InstalledDlls { get; set; }
+        public List<string> InstalledPackages { get; set; }
+    }
+
+    public class NugetContext
+    {
+        public string TargetFramework { get; }
+        public string TargetFrameworkShortName { get; }
+        public string TargetVersion { get; }
+        public string Folder { get; }
+        public string PackageName { get; }
+        public string PackageVersion { get; }
+
+        public NugetContext(string targetFramework, string targetFrameworkShortName, string targetVersion, string folder, string packageName,
+            string packageVersion)
+        {
+            TargetFramework = targetFramework;
+            TargetFrameworkShortName = targetFrameworkShortName;
+            TargetVersion = targetVersion;
+            Folder = folder;
+            PackageName = packageName;
+            PackageVersion = packageVersion;
         }
     }
 }

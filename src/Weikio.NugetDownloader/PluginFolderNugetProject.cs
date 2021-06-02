@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
+using System.Runtime.InteropServices.WindowsRuntime;
 using System.Threading;
 using System.Threading.Tasks;
 using NuGet.Frameworks;
@@ -22,7 +23,8 @@ namespace Weikio.NugetDownloader
         private readonly NuGetFramework _targetFramework;
         private readonly bool _onlyDownload;
         public List<DllInfo> InstalledDlls { get; } = new List<DllInfo>();
-        public List<DllInfo> RuntimeDlls { get; } = new List<DllInfo>();
+        public List<RunTimeDll> RuntimeDlls { get; } = new List<RunTimeDll>();
+        public List<string> InstalledPackages { get; } = new List<string>();
 
         public PluginFolderNugetProject(string root, IPackageSearchMetadata pluginNuGetPackage, NuGetFramework targetFramework, bool onlyDownload = false) :
             base(root, new PackagePathResolver(root), targetFramework)
@@ -47,6 +49,8 @@ namespace Weikio.NugetDownloader
             {
                 return result;
             }
+
+            InstalledPackages.Add(packageIdentity.ToString());
 
             using (var zipArchive = new ZipArchive(downloadResourceResult.PackageStream))
             {
@@ -82,9 +86,10 @@ namespace Weikio.NugetDownloader
                             RelativeFilePath = Path.Combine(packageIdentity.ToString(), e.Entry.FullName),
                             FullFilePath = Path.Combine(_root, packageIdentity.ToString(), e.Entry.FullName),
                             FileName = e.Entry.Name,
-                            PlatformName = e.TargetFramework.ToString(),
-                            PlatformShortName = e.TargetFramework.GetShortFolderName(),
-                            PackageIdentity = packageIdentity.Id
+                            TargetFrameworkName = e.TargetFramework.ToString(),
+                            TargetFrameworkShortName = e.TargetFramework.GetShortFolderName(),
+                            PackageIdentity = packageIdentity.Id,
+                            TargetVersion = e.TargetFramework.Version.ToString()
                         };
 
                         InstalledDlls.Add(installedDllInfo);
@@ -97,32 +102,53 @@ namespace Weikio.NugetDownloader
 
                     await File.WriteAllLinesAsync(Path.Combine(_root, PluginAssemblyFilesFileName), pluginAssemblies);
                 }
-                
+
                 var runtimeEntries = zipArchiveEntries
                     .Where(e => string.Equals(e.FullName.Split('/')[0], "runtimes", StringComparison.InvariantCultureIgnoreCase))
-                    .Select(e => new
-                    {
-                        Rid = e.FullName.Split('/')[1], 
-                        Entry = e
-                    }).ToList();
+                    .Select(e => new { Rid = e.FullName.Split('/')[1], Entry = e }).ToList();
 
                 foreach (var runtime in runtimeEntries)
                 {
-                    var runtimeDll = new DllInfo()
+                    var runtimeDll = new RunTimeDll()
                     {
                         FileName = runtime.Entry.Name,
-                        PackageIdentity = packageIdentity.Id,
-                        PlatformName = runtime.Rid,
                         FullFilePath = Path.Combine(_root, packageIdentity.ToString(), runtime.Entry.FullName),
                         RelativeFilePath = Path.Combine(packageIdentity.ToString(), runtime.Entry.FullName),
-                        PlatformShortName = runtime.Rid
+                        PackageIdentity = packageIdentity.Id,
                     };
-                    
+
+                    var runtimeDllDetails = ParseRuntimeDllDetails(runtime.Entry.FullName);
+                    runtimeDll.RID = runtimeDllDetails.Rid;
+                    runtimeDll.TargetFramework = runtimeDllDetails.Target;
+                    runtimeDll.TargetFrameworkShortName = runtimeDllDetails.TargetShortName;
+                    runtimeDll.TargetVersion = runtimeDllDetails.TargetVersion;
+
                     RuntimeDlls.Add(runtimeDll);
                 }
             }
 
             return result;
+        }
+
+        private (string Rid, string Target, string TargetShortName, string TargetVersion) ParseRuntimeDllDetails(string path)
+        {
+            var parts = path.Split('/');
+            var rid = parts[1];
+            var target = parts[2];
+
+            if (string.Equals(target, "native", StringComparison.InvariantCultureIgnoreCase))
+            {
+                target = "native";
+
+                return (rid, target, null, null);
+            }
+
+            // lib
+            var libPath  = parts[3];
+
+            var tf = NuGetFramework.ParseFolder(libPath);
+
+            return (rid, tf.DotNetFrameworkName, libPath, tf.Version.ToString());
         }
 
         public async Task<string[]> GetPluginAssemblyFilesAsync()
@@ -143,7 +169,37 @@ namespace Weikio.NugetDownloader
         public string FileName { get; set; }
         public string RelativeFilePath { get; set; }
         public string FullFilePath { get; set; }
-        public string PlatformName { get; set; }
-        public string PlatformShortName { get; set; }
+        public string TargetFrameworkName { get; set; }
+        public string TargetFrameworkShortName { get; set; }
+        public string TargetVersion { get; set; }
+    }
+
+    public class RunTimeDll
+    {
+        public string PackageIdentity { get; set; }
+        public string FileName { get; set; }
+        public string RelativeFilePath { get; set; }
+        public string FullFilePath { get; set; }
+        public string RID { get; set; }
+
+        public bool IsNative
+        {
+            get
+            {
+                return string.Equals(TargetFrameworkShortName, "native", StringComparison.InvariantCultureIgnoreCase);
+            }
+        }
+
+        public bool IsLib
+        {
+            get
+            {
+                return !IsNative;
+            }
+        }
+
+        public string TargetFramework { get; set; }
+        public string TargetFrameworkShortName { get; set; }
+        public string TargetVersion { get; set; }
     }
 }
