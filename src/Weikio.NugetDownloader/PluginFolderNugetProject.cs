@@ -3,9 +3,9 @@ using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
-using System.Runtime.InteropServices.WindowsRuntime;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.DependencyModel;
 using NuGet.Frameworks;
 using NuGet.Packaging;
 using NuGet.Packaging.Core;
@@ -22,17 +22,27 @@ namespace Weikio.NugetDownloader
         private readonly IPackageSearchMetadata _pluginNuGetPackage;
         private readonly NuGetFramework _targetFramework;
         private readonly bool _onlyDownload;
+        private CompatibilityProvider _compProvider;
+        private FrameworkReducer _reducer;
+        
+        public string Rid { get; set; }
+        public List<string> SupportedRids { get; }
         public List<DllInfo> InstalledDlls { get; } = new List<DllInfo>();
         public List<RunTimeDll> RuntimeDlls { get; } = new List<RunTimeDll>();
         public List<string> InstalledPackages { get; } = new List<string>();
 
-        public PluginFolderNugetProject(string root, IPackageSearchMetadata pluginNuGetPackage, NuGetFramework targetFramework, bool onlyDownload = false) :
+        public PluginFolderNugetProject(string root, IPackageSearchMetadata pluginNuGetPackage, NuGetFramework targetFramework, bool onlyDownload = false,
+            string targetRid = null) :
             base(root, new PackagePathResolver(root), targetFramework)
         {
             _root = root;
             _pluginNuGetPackage = pluginNuGetPackage;
             _targetFramework = targetFramework;
             _onlyDownload = onlyDownload;
+
+            _compProvider = new CompatibilityProvider(new DefaultFrameworkNameProvider());
+            _reducer = new FrameworkReducer(new DefaultFrameworkNameProvider(), _compProvider);
+            SupportedRids = GetSupportedRids(targetRid);
         }
 
         public override async Task<IEnumerable<PackageReference>> GetInstalledPackagesAsync(CancellationToken token)
@@ -60,24 +70,22 @@ namespace Weikio.NugetDownloader
                 var entriesWithTargetFramework = zipArchiveEntries
                     .Select(e => new { TargetFramework = NuGetFramework.Parse(e.FullName.Split('/')[1]), Entry = e }).ToList();
 
-                var matchingEntries = entriesWithTargetFramework
-                    .Where(e => e.TargetFramework.Version.Major > 0 &&
-                                e.TargetFramework.Version <= _targetFramework.Version).ToList();
+                var compatibleEntries = entriesWithTargetFramework.Where(e => _compProvider.IsCompatible(_targetFramework, e.TargetFramework)).ToList();
+                var mostCompatibleFramework = _reducer.GetNearest(_targetFramework, compatibleEntries.Select(x => x.TargetFramework));
 
-                var orderedEntries = matchingEntries
-                    .OrderBy(e => e.TargetFramework.GetShortFolderName()).ToList();
-
-                if (orderedEntries.Any())
+                if (mostCompatibleFramework == null)
                 {
-                    var dllEntries = orderedEntries
-                        .GroupBy(e => e.TargetFramework.GetShortFolderName())
-                        .Last()
-                        .Select(e => e)
-                        .ToArray();
+                    return result;
+                }
 
+                var matchingEntries = entriesWithTargetFramework
+                    .Where(e => e.TargetFramework == mostCompatibleFramework).ToList();
+
+                if (matchingEntries.Any())
+                {
                     var pluginAssemblies = new List<string>();
 
-                    foreach (var e in dllEntries)
+                    foreach (var e in matchingEntries)
                     {
                         e.Entry.ExtractToFile(Path.Combine(_root, e.Entry.Name), overwrite: true);
 
@@ -125,6 +133,41 @@ namespace Weikio.NugetDownloader
 
                     RuntimeDlls.Add(runtimeDll);
                 }
+
+                var supportedRunTimeDlls = RuntimeDlls.Where(x => SupportedRids.Contains(x.RID)).ToList();
+
+                var runtimeLibFiles = supportedRunTimeDlls.Where(x => x.IsLib).GroupBy(x => x.FileName).ToList();
+
+                foreach (var fileGroup in runtimeLibFiles)
+                {
+                    var targetFrameworks = fileGroup.Select(x => NuGetFramework.ParseFrameworkName(x.TargetFramework, new DefaultFrameworkNameProvider()))
+                        .ToList();
+
+                    var compatibleFrameworks = targetFrameworks.Where(x => _compProvider.IsCompatible(_targetFramework, x)).ToList();
+
+                    foreach (var runTimeDll in fileGroup)
+                    {
+                        if (compatibleFrameworks.Any(x => string.Equals(x.DotNetFrameworkName, runTimeDll.TargetFramework)))
+                        {
+                            runTimeDll.IsSupported = true;
+                        }
+                    }
+
+                    var mostMatching = _reducer.GetNearest(_targetFramework, targetFrameworks);
+
+                    if (mostMatching == null)
+                    {
+                        continue;
+                    }
+
+                    foreach (var runTimeDll in fileGroup)
+                    {
+                        if (string.Equals(runTimeDll.TargetFramework, mostMatching.DotNetFrameworkName))
+                        {
+                            runTimeDll.IsRecommended = true;
+                        }
+                    }
+                }
             }
 
             return result;
@@ -144,11 +187,30 @@ namespace Weikio.NugetDownloader
             }
 
             // lib
-            var libPath  = parts[3];
+            var libPath = parts[3];
 
             var tf = NuGetFramework.ParseFolder(libPath);
 
             return (rid, tf.DotNetFrameworkName, libPath, tf.Version.ToString());
+        }
+
+        private List<string> GetSupportedRids(string targetRid)
+        {
+            Rid = string.IsNullOrWhiteSpace(targetRid) ? Microsoft.DotNet.PlatformAbstractions.RuntimeEnvironment.GetRuntimeIdentifier() : targetRid;
+
+            var dependencyContext = DependencyContext.Default;
+
+            var fallbacks = dependencyContext.RuntimeGraph.Single(x =>
+                string.Equals(x.Runtime, Rid, StringComparison.InvariantCultureIgnoreCase));
+
+            var result = new List<string> { Rid };
+
+            foreach (var runtimeFallback in fallbacks.Fallbacks)
+            {
+                result.Add(runtimeFallback);
+            }
+
+            return result;
         }
 
         public async Task<string[]> GetPluginAssemblyFilesAsync()
@@ -201,5 +263,7 @@ namespace Weikio.NugetDownloader
         public string TargetFramework { get; set; }
         public string TargetFrameworkShortName { get; set; }
         public string TargetVersion { get; set; }
+        public bool IsSupported { get; set; }
+        public bool IsRecommended { get; set; }
     }
 }

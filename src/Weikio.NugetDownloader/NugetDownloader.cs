@@ -3,12 +3,10 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
-using System.Runtime.InteropServices.WindowsRuntime;
 using System.Runtime.Versioning;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Extensions.DependencyModel;
 using Newtonsoft.Json;
 using NuGet.Common;
 using NuGet.Configuration;
@@ -35,7 +33,7 @@ namespace Weikio.NugetDownloader
 
         public async Task<NugetDownloadResult> DownloadAsync(string packageFolder, string packageName, string packageVersion = null,
             bool includePrerelease = false,
-            NuGetFeed packageFeed = null, bool onlyDownload = false, bool includeSecondaryRepositories = false, string targetFramework = null)
+            NuGetFeed packageFeed = null, bool onlyDownload = false, bool includeSecondaryRepositories = false, string targetFramework = null, string targetRid = null)
         {
             if (!Directory.Exists(packageFolder))
             {
@@ -95,7 +93,7 @@ namespace Weikio.NugetDownloader
 
             var nuGetFramework = NuGetFramework.ParseFrameworkName(targetFramework, frameworkNameProvider);
 
-            var project = new PluginFolderNugetProject(packageFolder, package, nuGetFramework, onlyDownload);
+            var project = new PluginFolderNugetProject(packageFolder, package, nuGetFramework, onlyDownload, targetRid);
             var packageManager = new NuGetPackageManager(sourceRepositoryProvider, settings, packageFolder) { PackagesFolderNuGetProject = project };
 
             var clientPolicyContext = ClientPolicyContext.GetClientPolicy(settings, _logger);
@@ -144,7 +142,7 @@ namespace Weikio.NugetDownloader
             var result = new NugetDownloadResult
             {
                 Context = new NugetContext(nuGetFramework.ToString(), nuGetFramework.GetShortFolderName(), nuGetFramework.Version.ToString(), packageFolder,
-                    packageName, packageVersion)
+                    packageName, packageVersion, project.Rid, project.SupportedRids)
             };
 
             if (onlyDownload)
@@ -155,12 +153,6 @@ namespace Weikio.NugetDownloader
 
                 return result;
             }
-
-            var installedDllsJson = JsonConvert.SerializeObject(project.InstalledDlls, Formatting.Indented);
-            await File.WriteAllTextAsync(Path.Combine(packageFolder, ".dlls.deps"), installedDllsJson);
-
-            var runtimeDllJson = JsonConvert.SerializeObject(project.RuntimeDlls, Formatting.Indented);
-            await File.WriteAllTextAsync(Path.Combine(packageFolder, ".runtime.deps"), runtimeDllJson);
 
             result.InstalledDlls = new List<DllInfo>(project.InstalledDlls);
             result.RunTimeDlls = new List<RunTimeDll>(project.RuntimeDlls);
@@ -399,12 +391,14 @@ namespace Weikio.NugetDownloader
         public string TargetFramework { get; }
         public string TargetFrameworkShortName { get; }
         public string TargetVersion { get; }
+        public string Rid { get; set; }
+        public List<string> SupportedRids { get; set; }
         public string Folder { get; }
         public string PackageName { get; }
         public string PackageVersion { get; }
 
         public NugetContext(string targetFramework, string targetFrameworkShortName, string targetVersion, string folder, string packageName,
-            string packageVersion)
+            string packageVersion, string rid, List<string> supportedRids)
         {
             TargetFramework = targetFramework;
             TargetFrameworkShortName = targetFrameworkShortName;
@@ -412,6 +406,8 @@ namespace Weikio.NugetDownloader
             Folder = folder;
             PackageName = packageName;
             PackageVersion = packageVersion;
+            Rid = rid;
+            SupportedRids = supportedRids;
         }
     }
 }
