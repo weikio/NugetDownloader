@@ -24,7 +24,7 @@ namespace Weikio.NugetDownloader
         private readonly bool _onlyDownload;
         private CompatibilityProvider _compProvider;
         private FrameworkReducer _reducer;
-        
+
         public string Rid { get; set; }
         public List<string> SupportedRids { get; }
         public List<DllInfo> InstalledDlls { get; } = new List<DllInfo>();
@@ -67,110 +67,152 @@ namespace Weikio.NugetDownloader
                 var zipArchiveEntries = zipArchive.Entries
                     .Where(e => e.Name.EndsWith(".dll") || e.Name.EndsWith(".exe")).ToList();
 
-                var entriesWithTargetFramework = zipArchiveEntries
-                    .Select(e => new { TargetFramework = NuGetFramework.Parse(e.FullName.Split('/')[1]), Entry = e }).ToList();
+                await HandleManagedDlls(packageIdentity, zipArchiveEntries);
+                HandleRuntimeDlls(packageIdentity, zipArchiveEntries);
+            }
 
-                var compatibleEntries = entriesWithTargetFramework.Where(e => _compProvider.IsCompatible(_targetFramework, e.TargetFramework)).ToList();
-                var mostCompatibleFramework = _reducer.GetNearest(_targetFramework, compatibleEntries.Select(x => x.TargetFramework));
+            return result;
+        }
 
-                if (mostCompatibleFramework == null)
+        private void HandleRuntimeDlls(PackageIdentity packageIdentity, List<ZipArchiveEntry> zipArchiveEntries)
+        {
+            var runtimeEntries = zipArchiveEntries
+                .Where(e => string.Equals(e.FullName.Split('/')[0], "runtimes", StringComparison.InvariantCultureIgnoreCase))
+                .Select(e => new { Rid = e.FullName.Split('/')[1], Entry = e }).ToList();
+
+            foreach (var runtime in runtimeEntries)
+            {
+                var runtimeDll = new RunTimeDll()
                 {
-                    return result;
+                    FileName = runtime.Entry.Name,
+                    FullFilePath = Path.Combine(_root, packageIdentity.ToString(), runtime.Entry.FullName),
+                    RelativeFilePath = Path.Combine(packageIdentity.ToString(), runtime.Entry.FullName),
+                    PackageIdentity = packageIdentity.Id,
+                };
+
+                var runtimeDllDetails = ParseRuntimeDllDetails(runtime.Entry.FullName);
+                runtimeDll.RID = runtimeDllDetails.Rid;
+                runtimeDll.TargetFramework = runtimeDllDetails.Target;
+                runtimeDll.TargetFrameworkShortName = runtimeDllDetails.TargetShortName;
+                runtimeDll.TargetVersion = runtimeDllDetails.TargetVersion;
+
+                RuntimeDlls.Add(runtimeDll);
+            }
+
+            var supportedRunTimeDlls = RuntimeDlls.Where(x => SupportedRids.Contains(x.RID)).ToList();
+
+            var runtimeLibFiles = supportedRunTimeDlls.Where(x => x.IsLib).GroupBy(x => x.FileName).ToList();
+
+            foreach (var fileGroup in runtimeLibFiles)
+            {
+                var targetFrameworks = fileGroup.Select(x =>
+                        NuGetFramework.ParseFrameworkName(x.TargetFramework, new DefaultFrameworkNameProvider()))
+                    .ToList();
+
+                var compatibleFrameworks =
+                    targetFrameworks.Where(x => _compProvider.IsCompatible(_targetFramework, x)).ToList();
+
+                foreach (var runTimeDll in fileGroup)
+                {
+                    if (compatibleFrameworks.Any(x => string.Equals(x.DotNetFrameworkName, runTimeDll.TargetFramework)))
+                    {
+                        runTimeDll.IsSupported = true;
+                    }
                 }
 
-                var matchingEntries = entriesWithTargetFramework
-                    .Where(e => e.TargetFramework == mostCompatibleFramework).ToList();
+                var mostMatching = _reducer.GetNearest(_targetFramework, targetFrameworks);
 
-                if (matchingEntries.Any())
+                if (mostMatching == null)
                 {
-                    var pluginAssemblies = new List<string>();
-
-                    foreach (var e in matchingEntries)
-                    {
-                        e.Entry.ExtractToFile(Path.Combine(_root, e.Entry.Name), overwrite: true);
-
-                        var installedDllInfo = new DllInfo
-                        {
-                            RelativeFilePath = Path.Combine(packageIdentity.ToString(), e.Entry.FullName),
-                            FullFilePath = Path.Combine(_root, packageIdentity.ToString(), e.Entry.FullName),
-                            FileName = e.Entry.Name,
-                            TargetFrameworkName = e.TargetFramework.ToString(),
-                            TargetFrameworkShortName = e.TargetFramework.GetShortFolderName(),
-                            PackageIdentity = packageIdentity.Id,
-                            TargetVersion = e.TargetFramework.Version.ToString()
-                        };
-
-                        InstalledDlls.Add(installedDllInfo);
-
-                        if (packageIdentity.Id == _pluginNuGetPackage.Identity.Id)
-                        {
-                            pluginAssemblies.Add(e.Entry.Name);
-                        }
-                    }
-
-                    await File.WriteAllLinesAsync(Path.Combine(_root, PluginAssemblyFilesFileName), pluginAssemblies);
+                    continue;
                 }
 
-                var runtimeEntries = zipArchiveEntries
-                    .Where(e => string.Equals(e.FullName.Split('/')[0], "runtimes", StringComparison.InvariantCultureIgnoreCase))
-                    .Select(e => new { Rid = e.FullName.Split('/')[1], Entry = e }).ToList();
-
-                foreach (var runtime in runtimeEntries)
+                foreach (var runTimeDll in fileGroup)
                 {
-                    var runtimeDll = new RunTimeDll()
+                    if (string.Equals(runTimeDll.TargetFramework, mostMatching.DotNetFrameworkName))
                     {
-                        FileName = runtime.Entry.Name,
-                        FullFilePath = Path.Combine(_root, packageIdentity.ToString(), runtime.Entry.FullName),
-                        RelativeFilePath = Path.Combine(packageIdentity.ToString(), runtime.Entry.FullName),
-                        PackageIdentity = packageIdentity.Id,
-                    };
-
-                    var runtimeDllDetails = ParseRuntimeDllDetails(runtime.Entry.FullName);
-                    runtimeDll.RID = runtimeDllDetails.Rid;
-                    runtimeDll.TargetFramework = runtimeDllDetails.Target;
-                    runtimeDll.TargetFrameworkShortName = runtimeDllDetails.TargetShortName;
-                    runtimeDll.TargetVersion = runtimeDllDetails.TargetVersion;
-
-                    RuntimeDlls.Add(runtimeDll);
-                }
-
-                var supportedRunTimeDlls = RuntimeDlls.Where(x => SupportedRids.Contains(x.RID)).ToList();
-
-                var runtimeLibFiles = supportedRunTimeDlls.Where(x => x.IsLib).GroupBy(x => x.FileName).ToList();
-
-                foreach (var fileGroup in runtimeLibFiles)
-                {
-                    var targetFrameworks = fileGroup.Select(x => NuGetFramework.ParseFrameworkName(x.TargetFramework, new DefaultFrameworkNameProvider()))
-                        .ToList();
-
-                    var compatibleFrameworks = targetFrameworks.Where(x => _compProvider.IsCompatible(_targetFramework, x)).ToList();
-
-                    foreach (var runTimeDll in fileGroup)
-                    {
-                        if (compatibleFrameworks.Any(x => string.Equals(x.DotNetFrameworkName, runTimeDll.TargetFramework)))
-                        {
-                            runTimeDll.IsSupported = true;
-                        }
-                    }
-
-                    var mostMatching = _reducer.GetNearest(_targetFramework, targetFrameworks);
-
-                    if (mostMatching == null)
-                    {
-                        continue;
-                    }
-
-                    foreach (var runTimeDll in fileGroup)
-                    {
-                        if (string.Equals(runTimeDll.TargetFramework, mostMatching.DotNetFrameworkName))
-                        {
-                            runTimeDll.IsRecommended = true;
-                        }
+                        runTimeDll.IsRecommended = true;
                     }
                 }
             }
 
-            return result;
+            var runtimeNativeFiles = supportedRunTimeDlls.Where(x => x.IsNative).GroupBy(x => x.FileName).ToList();
+
+            foreach (var fileGroup in runtimeNativeFiles)
+            {
+                foreach (var runTimeDll in fileGroup)
+                {
+                    runTimeDll.IsSupported = true;
+                }
+
+                // The Rids are already ordered from best match to the least matching
+                var recommededFound = false;
+                foreach (var supportedRid in SupportedRids)
+                {
+                    foreach (var runTimeDll in fileGroup)
+                    {
+                        if (string.Equals(runTimeDll.RID, supportedRid))
+                        {
+                            runTimeDll.IsRecommended = true;
+                            recommededFound = true;
+                            
+                            break;
+                        }
+
+                        if (recommededFound)
+                        {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        private async Task HandleManagedDlls(PackageIdentity packageIdentity, List<ZipArchiveEntry> zipArchiveEntries)
+        {
+            var entriesWithTargetFramework = zipArchiveEntries
+                .Select(e => new { TargetFramework = NuGetFramework.Parse(e.FullName.Split('/')[1]), Entry = e }).ToList();
+
+            var compatibleEntries = entriesWithTargetFramework.Where(e => _compProvider.IsCompatible(_targetFramework, e.TargetFramework)).ToList();
+            var mostCompatibleFramework = _reducer.GetNearest(_targetFramework, compatibleEntries.Select(x => x.TargetFramework));
+
+            if (mostCompatibleFramework == null)
+            {
+                return;
+            }
+
+            var matchingEntries = entriesWithTargetFramework
+                .Where(e => e.TargetFramework == mostCompatibleFramework).ToList();
+
+            if (matchingEntries.Any())
+            {
+                var pluginAssemblies = new List<string>();
+
+                foreach (var e in matchingEntries)
+                {
+                    ZipFileExtensions.ExtractToFile(e.Entry, Path.Combine(_root, e.Entry.Name), overwrite: true);
+
+                    var installedDllInfo = new DllInfo
+                    {
+                        RelativeFilePath = Path.Combine(packageIdentity.ToString(), e.Entry.FullName),
+                        FullFilePath = Path.Combine(_root, packageIdentity.ToString(), e.Entry.FullName),
+                        FileName = e.Entry.Name,
+                        TargetFrameworkName = e.TargetFramework.ToString(),
+                        TargetFrameworkShortName = e.TargetFramework.GetShortFolderName(),
+                        PackageIdentity = packageIdentity.Id,
+                        TargetVersion = e.TargetFramework.Version.ToString()
+                    };
+
+                    InstalledDlls.Add(installedDllInfo);
+
+                    if (packageIdentity.Id == _pluginNuGetPackage.Identity.Id)
+                    {
+                        pluginAssemblies.Add(e.Entry.Name);
+                    }
+                }
+
+                await File.WriteAllLinesAsync(Path.Combine(_root, PluginAssemblyFilesFileName), pluginAssemblies);
+            }
         }
 
         private (string Rid, string Target, string TargetShortName, string TargetVersion) ParseRuntimeDllDetails(string path)
@@ -248,7 +290,7 @@ namespace Weikio.NugetDownloader
         {
             get
             {
-                return string.Equals(TargetFrameworkShortName, "native", StringComparison.InvariantCultureIgnoreCase);
+                return string.Equals(TargetFramework, "native", StringComparison.InvariantCultureIgnoreCase);
             }
         }
 
