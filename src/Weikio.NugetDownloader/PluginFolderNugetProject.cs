@@ -22,6 +22,7 @@ namespace Weikio.NugetDownloader
         private readonly IPackageSearchMetadata _pluginNuGetPackage;
         private readonly NuGetFramework _targetFramework;
         private readonly bool _onlyDownload;
+        private readonly bool _filterOurRefFiles;
         private CompatibilityProvider _compProvider;
         private FrameworkReducer _reducer;
 
@@ -32,13 +33,14 @@ namespace Weikio.NugetDownloader
         public List<string> InstalledPackages { get; } = new List<string>();
 
         public PluginFolderNugetProject(string root, IPackageSearchMetadata pluginNuGetPackage, NuGetFramework targetFramework, bool onlyDownload = false,
-            string targetRid = null) :
+            string targetRid = null, bool filterOurRefFiles = true) :
             base(root, new PackagePathResolver(root), targetFramework)
         {
             _root = root;
             _pluginNuGetPackage = pluginNuGetPackage;
             _targetFramework = targetFramework;
             _onlyDownload = onlyDownload;
+            _filterOurRefFiles = filterOurRefFiles;
 
             _compProvider = new CompatibilityProvider(new DefaultFrameworkNameProvider());
             _reducer = new FrameworkReducer(new DefaultFrameworkNameProvider(), _compProvider);
@@ -172,6 +174,11 @@ namespace Weikio.NugetDownloader
         {
             var entriesWithTargetFramework = zipArchiveEntries
                 .Select(e => new { TargetFramework = NuGetFramework.Parse(e.FullName.Split('/')[1]), Entry = e }).ToList();
+
+            if (_filterOurRefFiles)
+            {
+                entriesWithTargetFramework = entriesWithTargetFramework.Where(e => !string.Equals(e.Entry.FullName.Split('/')[0], "ref")).ToList();
+            }
 
             var compatibleEntries = entriesWithTargetFramework.Where(e => _compProvider.IsCompatible(_targetFramework, e.TargetFramework)).ToList();
             var mostCompatibleFramework = _reducer.GetNearest(_targetFramework, compatibleEntries.Select(x => x.TargetFramework));

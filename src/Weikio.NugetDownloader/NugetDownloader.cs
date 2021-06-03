@@ -33,7 +33,7 @@ namespace Weikio.NugetDownloader
 
         public async Task<NugetDownloadResult> DownloadAsync(string packageFolder, string packageName, string packageVersion = null,
             bool includePrerelease = false,
-            NuGetFeed packageFeed = null, bool onlyDownload = false, bool includeSecondaryRepositories = false, string targetFramework = null, string targetRid = null)
+            NuGetFeed packageFeed = null, bool onlyDownload = false, bool includeSecondaryRepositories = false, string targetFramework = null, string targetRid = null, bool filterOurRefFiles = true)
         {
             if (!Directory.Exists(packageFolder))
             {
@@ -93,7 +93,7 @@ namespace Weikio.NugetDownloader
 
             var nuGetFramework = NuGetFramework.ParseFrameworkName(targetFramework, frameworkNameProvider);
 
-            var project = new PluginFolderNugetProject(packageFolder, package, nuGetFramework, onlyDownload, targetRid);
+            var project = new PluginFolderNugetProject(packageFolder, package, nuGetFramework, onlyDownload, targetRid, filterOurRefFiles);
             var packageManager = new NuGetPackageManager(sourceRepositoryProvider, settings, packageFolder) { PackagesFolderNuGetProject = project };
 
             var clientPolicyContext = ClientPolicyContext.GetClientPolicy(settings, _logger);
