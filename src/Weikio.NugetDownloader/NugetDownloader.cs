@@ -31,9 +31,36 @@ namespace Weikio.NugetDownloader
             _logger = logger ?? new ConsoleLogger();
         }
 
+        public async Task<NugetDownloadResult> DownloadAsync(
+            string packageFolder, 
+            string packageName, 
+            string packageVersion = null,
+            bool includePrerelease = false,
+            NuGetFeed packageFeed = null, 
+            bool onlyDownload = false, 
+            bool includeSecondaryRepositories = false, 
+            string targetFramework = null,
+            string targetRid = null,
+            bool filterOurRefFiles = true)
+        {
+            return await DownloadAsync(
+                packageFolder, 
+                packageName, 
+                packageVersion, 
+                includePrerelease, 
+                packageFeed, 
+                onlyDownload, 
+                includeSecondaryRepositories,
+                targetFramework, 
+                targetRid,
+                filterOurRefFiles, 
+                null);
+        }
+
         public async Task<NugetDownloadResult> DownloadAsync(string packageFolder, string packageName, string packageVersion = null,
             bool includePrerelease = false,
-            NuGetFeed packageFeed = null, bool onlyDownload = false, bool includeSecondaryRepositories = false, string targetFramework = null, string targetRid = null, bool filterOurRefFiles = true)
+            NuGetFeed packageFeed = null, bool onlyDownload = false, bool includeSecondaryRepositories = false, string targetFramework = null, string targetRid = null, 
+            bool filterOurRefFiles = true, List<string> ignoredSources = null)
         {
             if (!Directory.Exists(packageFolder))
             {
@@ -123,6 +150,11 @@ namespace Weikio.NugetDownloader
             if (includeSecondaryRepositories == false)
             {
                 secondaryRepos = new List<SourceRepository>();
+            }
+
+            if (ignoredSources?.Any() == true)
+            {
+                secondaryRepos = secondaryRepos.Where(x => ignoredSources.Contains(x.PackageSource.Name) == false).ToList();
             }
 
             await packageManager.InstallPackageAsync(
