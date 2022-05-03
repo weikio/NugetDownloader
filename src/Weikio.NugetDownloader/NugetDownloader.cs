@@ -103,7 +103,7 @@ namespace Weikio.NugetDownloader
 
             if (package == null)
             {
-                throw new PackageNotFoundException($"Couldn't find package '{packageVersion}'.{packageVersion}.");
+                throw new PackageNotFoundException($"Couldn't find package '{packageName}'.{packageVersion}.");
             }
 
             if (string.IsNullOrWhiteSpace(targetFramework))
