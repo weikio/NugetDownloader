@@ -59,8 +59,30 @@ namespace Weikio.NugetDownloader
 
         public async Task<NugetDownloadResult> DownloadAsync(string packageFolder, string packageName, string packageVersion = null,
             bool includePrerelease = false,
-            NuGetFeed packageFeed = null, bool onlyDownload = false, bool includeSecondaryRepositories = false, string targetFramework = null, string targetRid = null, 
+            NuGetFeed packageFeed = null, bool onlyDownload = false, bool includeSecondaryRepositories = false, string targetFramework = null,
+            string targetRid = null,
             bool filterOurRefFiles = true, List<string> ignoredSources = null)
+        {
+            return await DownloadAsync(
+                packageFolder, 
+                packageName, 
+                packageVersion, 
+                includePrerelease, 
+                packageFeed, 
+                onlyDownload, 
+                includeSecondaryRepositories,
+                targetFramework, 
+                targetRid,
+                filterOurRefFiles, 
+                null,
+                false);
+        }
+
+        public async Task<NugetDownloadResult> DownloadAsync(string packageFolder, string packageName, string packageVersion = null,
+            bool includePrerelease = false,
+            NuGetFeed packageFeed = null, bool onlyDownload = false, bool includeSecondaryRepositories = false, string targetFramework = null,
+            string targetRid = null,
+            bool filterOurRefFiles = true, List<string> ignoredSources = null, bool autoRetryOnFail = false)
         {
             if (!Directory.Exists(packageFolder))
             {
@@ -74,36 +96,26 @@ namespace Weikio.NugetDownloader
 
             IPackageSearchMetadata package = null;
             SourceRepository sourceRepo = null;
+            
+            var packageResult = await GetPackage(packageName, packageVersion, includePrerelease, packageFeed, providers, sourceRepositoryProvider, false);
 
-            if (!string.IsNullOrWhiteSpace(packageFeed?.Feed))
-            {
-                sourceRepo = GetSourceRepo(packageFeed, providers);
-
-                package = await SearchPackageAsync(packageName, packageVersion, includePrerelease, sourceRepo);
-            }
-            else
-            {
-                foreach (var repo in sourceRepositoryProvider.GetRepositories())
-                {
-                    if (packageFeed != null && repo.PackageSource.Name != packageFeed.Name)
-                    {
-                        continue;
-                    }
-
-                    package = await SearchPackageAsync(packageName, packageVersion, includePrerelease, repo);
-
-                    if (package != null)
-                    {
-                        sourceRepo = repo;
-
-                        break;
-                    }
-                }
-            }
-
+            package = packageResult.Item2;
+            sourceRepo = packageResult.Item1;
+            
             if (package == null)
             {
-                throw new PackageNotFoundException($"Couldn't find package '{packageName}'.{packageVersion}.");
+                if (autoRetryOnFail)
+                {
+                    packageResult = await GetPackage(packageName, packageVersion, includePrerelease, packageFeed, providers, sourceRepositoryProvider, true);
+
+                    package = packageResult.Item2;
+                    sourceRepo = packageResult.Item1;
+                }
+
+                if (package == null)
+                {
+                    throw new PackageNotFoundException($"Couldn't find package '{packageName}'.{packageVersion}.");
+                }
             }
 
             if (string.IsNullOrWhiteSpace(targetFramework))
@@ -194,6 +206,41 @@ namespace Weikio.NugetDownloader
             result.PackageAssemblyFiles = new List<string>(packageAssemblies);
 
             return result;
+        }
+
+        private async Task<(SourceRepository, IPackageSearchMetadata)> GetPackage(string packageName, string packageVersion, bool includePrerelease, NuGetFeed packageFeed, List<Lazy<INuGetResourceProvider>> providers,
+            SourceRepositoryProvider sourceRepositoryProvider, bool forceRefresh)
+        {
+            IPackageSearchMetadata package = null;
+            SourceRepository sourceRepo = null;
+            
+            if (!string.IsNullOrWhiteSpace(packageFeed?.Feed))
+            {
+                sourceRepo = GetSourceRepo(packageFeed, providers);
+
+                package = await SearchPackageAsync(packageName, packageVersion, includePrerelease, sourceRepo, forceRefresh);
+            }
+            else
+            {
+                foreach (var repo in sourceRepositoryProvider.GetRepositories())
+                {
+                    if (packageFeed != null && repo.PackageSource.Name != packageFeed.Name)
+                    {
+                        continue;
+                    }
+
+                    package = await SearchPackageAsync(packageName, packageVersion, includePrerelease, repo, forceRefresh);
+
+                    if (package != null)
+                    {
+                        sourceRepo = repo;
+
+                        break;
+                    }
+                }
+            }
+
+            return (sourceRepo, package);
         }
 
         public async Task<string[]> DownloadAsync(IPackageSearchMetadata packageIdentity, SourceRepository repository,
@@ -363,10 +410,15 @@ namespace Weikio.NugetDownloader
         }
 
         private async Task<IPackageSearchMetadata> SearchPackageAsync(string packageName, string version, bool includePrerelease,
-            SourceRepository sourceRepository)
+            SourceRepository sourceRepository, bool forceRefresh)
         {
             var packageMetadataResource = await sourceRepository.GetResourceAsync<PackageMetadataResource>();
             var sourceCacheContext = new SourceCacheContext();
+
+            if (forceRefresh)
+            {
+                sourceCacheContext = sourceCacheContext.WithRefreshCacheTrue();
+            }
 
             IPackageSearchMetadata packageMetaData = null;
 
