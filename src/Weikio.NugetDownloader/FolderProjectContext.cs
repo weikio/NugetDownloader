@@ -16,13 +16,13 @@ namespace Weikio.NugetDownloader
             _logger = logger;
         }
 
-        public ExecutionContext ExecutionContext => null;
+        public ExecutionContext? ExecutionContext => null;
 
-        public PackageExtractionContext PackageExtractionContext { get; set; }
+        public PackageExtractionContext PackageExtractionContext { get; set; } = null!;
 
-        public XDocument OriginalPackagesConfig { get; set; }
+        public XDocument? OriginalPackagesConfig { get; set; }
 
-        public ISourceControlManagerProvider SourceControlManagerProvider => null;
+        public ISourceControlManagerProvider? SourceControlManagerProvider => null;
 
         public void Log(MessageLevel level, string message, params object[] args)
         {
@@ -48,6 +48,9 @@ namespace Weikio.NugetDownloader
                 case MessageLevel.Error:
                     _logger.LogError(message);
                     break;
+                
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(level), level, null);
             }
         }
 

@@ -33,6 +33,9 @@ namespace Weikio.NugetDownloader
                 case LogLevel.Error:
                     Console.WriteLine($"ERROR - {message}");
                     break;
+                
+                default:
+                    throw new ArgumentOutOfRangeException();
             }
         }
 
