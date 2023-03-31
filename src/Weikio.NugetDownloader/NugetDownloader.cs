@@ -7,7 +7,6 @@ using System.Runtime.Versioning;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
-using Newtonsoft.Json;
 using NuGet.Common;
 using NuGet.Configuration;
 using NuGet.Frameworks;
@@ -26,63 +25,16 @@ namespace Weikio.NugetDownloader
     {
         private readonly ILogger _logger;
 
-        public NuGetDownloader(ILogger logger = null)
+        public NuGetDownloader(ILogger? logger = null)
         {
             _logger = logger ?? new ConsoleLogger();
         }
 
-        public async Task<NugetDownloadResult> DownloadAsync(
-            string packageFolder, 
-            string packageName, 
-            string packageVersion = null,
+        public async Task<NugetDownloadResult> DownloadAsync(string packageFolder, string packageName, string? packageVersion = null,
             bool includePrerelease = false,
-            NuGetFeed packageFeed = null, 
-            bool onlyDownload = false, 
-            bool includeSecondaryRepositories = false, 
-            string targetFramework = null,
-            string targetRid = null,
-            bool filterOurRefFiles = true)
-        {
-            return await DownloadAsync(
-                packageFolder, 
-                packageName, 
-                packageVersion, 
-                includePrerelease, 
-                packageFeed, 
-                onlyDownload, 
-                includeSecondaryRepositories,
-                targetFramework, 
-                targetRid,
-                filterOurRefFiles, 
-                null);
-        }
-
-        public async Task<NugetDownloadResult> DownloadAsync(string packageFolder, string packageName, string packageVersion = null,
-            bool includePrerelease = false,
-            NuGetFeed packageFeed = null, bool onlyDownload = false, bool includeSecondaryRepositories = false, string targetFramework = null,
-            string targetRid = null,
-            bool filterOurRefFiles = true, List<string> ignoredSources = null)
-        {
-            return await DownloadAsync(
-                packageFolder, 
-                packageName, 
-                packageVersion, 
-                includePrerelease, 
-                packageFeed, 
-                onlyDownload, 
-                includeSecondaryRepositories,
-                targetFramework, 
-                targetRid,
-                filterOurRefFiles, 
-                null,
-                false);
-        }
-
-        public async Task<NugetDownloadResult> DownloadAsync(string packageFolder, string packageName, string packageVersion = null,
-            bool includePrerelease = false,
-            NuGetFeed packageFeed = null, bool onlyDownload = false, bool includeSecondaryRepositories = false, string targetFramework = null,
-            string targetRid = null,
-            bool filterOurRefFiles = true, List<string> ignoredSources = null, bool autoRetryOnFail = false)
+            NuGetFeed? packageFeed = null, bool onlyDownload = false, bool includeSecondaryRepositories = false, string? targetFramework = null,
+            string? targetRid = null,
+            bool filterOurRefFiles = true, List<string>? ignoredSources = null, bool autoRetryOnFail = false)
         {
             if (!Directory.Exists(packageFolder))
             {
@@ -94,13 +46,10 @@ namespace Weikio.NugetDownloader
             var packageSourceProvider = new PackageSourceProvider(settings);
             var sourceRepositoryProvider = new SourceRepositoryProvider(packageSourceProvider, providers);
 
-            IPackageSearchMetadata package = null;
-            SourceRepository sourceRepo = null;
-            
             var packageResult = await GetPackage(packageName, packageVersion, includePrerelease, packageFeed, providers, sourceRepositoryProvider, false);
 
-            package = packageResult.Item2;
-            sourceRepo = packageResult.Item1;
+            var package = packageResult.Item2;
+            var sourceRepo = packageResult.Item1;
             
             if (package == null)
             {
@@ -121,7 +70,7 @@ namespace Weikio.NugetDownloader
             if (string.IsNullOrWhiteSpace(targetFramework))
             {
                 targetFramework = Assembly
-                    .GetEntryAssembly()
+                    .GetEntryAssembly()?
                     .GetCustomAttribute<TargetFrameworkAttribute>()?
                     .FrameworkName;
             }
@@ -183,36 +132,38 @@ namespace Weikio.NugetDownloader
             await project.PreProcessAsync(projectContext, CancellationToken.None);
             await packageManager.RestorePackageAsync(package.Identity, projectContext, downloadContext, new[] { sourceRepo }, CancellationToken.None);
 
-            var result = new NugetDownloadResult
-            {
-                Context = new NugetContext(nuGetFramework.ToString(), nuGetFramework.GetShortFolderName(), nuGetFramework.Version.ToString(), packageFolder,
-                    packageName, packageVersion, project.Rid, project.SupportedRids)
-            };
+            var context = new NugetContext(nuGetFramework.ToString(), nuGetFramework.GetShortFolderName(), nuGetFramework.Version.ToString(), packageFolder,
+                packageName, packageVersion, project.Rid, project.SupportedRids);
 
             if (onlyDownload)
             {
                 var versionFolder = Path.Combine(packageFolder, package.Identity.ToString());
 
-                result.PackageAssemblyFiles = new List<string>(Directory.GetFiles(versionFolder, "*.*", SearchOption.AllDirectories));
-
-                return result;
+                return new NugetDownloadResult
+                {
+                    Context = context,
+                    PackageAssemblyFiles = new List<string>(Directory.GetFiles(versionFolder, "*.*", SearchOption.AllDirectories))
+                };
             }
 
-            result.InstalledDlls = new List<DllInfo>(project.InstalledDlls);
-            result.RunTimeDlls = new List<RunTimeDll>(project.RuntimeDlls);
-            result.InstalledPackages = new List<string>(project.InstalledPackages);
-
             var packageAssemblies = await project.GetPluginAssemblyFilesAsync();
-            result.PackageAssemblyFiles = new List<string>(packageAssemblies);
 
-            return result;
+            return new NugetDownloadResult
+            {
+                Context = context,
+                PackageAssemblyFiles = new List<string>(packageAssemblies),
+                RunTimeDlls = new List<RunTimeDll>(project.RuntimeDlls),
+                InstalledDlls = new List<DllInfo>(project.InstalledDlls),
+                InstalledPackages = new List<string>(project.InstalledPackages)
+            };
         }
 
-        private async Task<(SourceRepository, IPackageSearchMetadata)> GetPackage(string packageName, string packageVersion, bool includePrerelease, NuGetFeed packageFeed, List<Lazy<INuGetResourceProvider>> providers,
+        private async Task<(SourceRepository?, IPackageSearchMetadata?)> GetPackage(
+            string packageName, string? packageVersion, bool includePrerelease, NuGetFeed? packageFeed, List<Lazy<INuGetResourceProvider>> providers,
             SourceRepositoryProvider sourceRepositoryProvider, bool forceRefresh)
         {
-            IPackageSearchMetadata package = null;
-            SourceRepository sourceRepo = null;
+            IPackageSearchMetadata? package = null;
+            SourceRepository?  sourceRepo = null;
             
             if (!string.IsNullOrWhiteSpace(packageFeed?.Feed))
             {
@@ -257,7 +208,7 @@ namespace Weikio.NugetDownloader
             var sourceRepositoryProvider = new SourceRepositoryProvider(packageSourceProvider, providers);
 
             var dotNetFramework = Assembly
-                .GetEntryAssembly()
+                .GetEntryAssembly()?
                 .GetCustomAttribute<TargetFrameworkAttribute>()?
                 .FrameworkName;
 
@@ -318,7 +269,6 @@ namespace Weikio.NugetDownloader
 
         private static SourceRepository GetSourceRepo(NuGetFeed packageFeed, List<Lazy<INuGetResourceProvider>> providers)
         {
-            SourceRepository sourceRepo;
             var packageSource = new PackageSource(packageFeed.Feed);
 
             if (!string.IsNullOrWhiteSpace(packageFeed.Username))
@@ -326,7 +276,7 @@ namespace Weikio.NugetDownloader
                 packageSource.Credentials = new PackageSourceCredential(packageFeed.Name, packageFeed.Username, packageFeed.Password, true, null);
             }
 
-            sourceRepo = new SourceRepository(packageSource, providers);
+            var sourceRepo = new SourceRepository(packageSource, providers);
 
             return sourceRepo;
         }
@@ -409,7 +359,7 @@ namespace Weikio.NugetDownloader
             return packages.Select(x => (sourceRepo, x));
         }
 
-        private async Task<IPackageSearchMetadata> SearchPackageAsync(string packageName, string version, bool includePrerelease,
+        private async Task<IPackageSearchMetadata?> SearchPackageAsync(string? packageName, string? version, bool includePrerelease,
             SourceRepository sourceRepository, bool forceRefresh)
         {
             var packageMetadataResource = await sourceRepository.GetResourceAsync<PackageMetadataResource>();
@@ -420,11 +370,11 @@ namespace Weikio.NugetDownloader
                 sourceCacheContext = sourceCacheContext.WithRefreshCacheTrue();
             }
 
-            IPackageSearchMetadata packageMetaData = null;
+            IPackageSearchMetadata? packageMetaData = null;
 
             if (!string.IsNullOrEmpty(version) && !version.Contains('*'))
             {
-                if (NuGetVersion.TryParse(version, out var nugetversion))
+                if (NuGetVersion.TryParse(version, out _))
                 {
                     var packageIdentity = new PackageIdentity(packageName, NuGetVersion.Parse(version));
 
@@ -461,13 +411,13 @@ namespace Weikio.NugetDownloader
         }
     }
 
-    public class NugetDownloadResult
+    public record NugetDownloadResult
     {
-        public NugetContext Context { get; set; }
-        public List<string> PackageAssemblyFiles { get; set; }
-        public List<RunTimeDll> RunTimeDlls { get; set; }
-        public List<DllInfo> InstalledDlls { get; set; }
-        public List<string> InstalledPackages { get; set; }
+        public NugetContext Context { get; init; } = null!;
+        public List<string> PackageAssemblyFiles { get; init; } = null!;
+        public List<RunTimeDll>? RunTimeDlls { get; init; }
+        public List<DllInfo>? InstalledDlls { get; init; }
+        public List<string>? InstalledPackages { get; init; }
     }
 
     public class NugetContext
@@ -475,14 +425,14 @@ namespace Weikio.NugetDownloader
         public string TargetFramework { get; }
         public string TargetFrameworkShortName { get; }
         public string TargetVersion { get; }
-        public string Rid { get; set; }
-        public List<string> SupportedRids { get; set; }
+        public string? Rid { get; }
+        public List<string> SupportedRids { get; }
         public string Folder { get; }
         public string PackageName { get; }
-        public string PackageVersion { get; }
+        public string? PackageVersion { get; }
 
         public NugetContext(string targetFramework, string targetFrameworkShortName, string targetVersion, string folder, string packageName,
-            string packageVersion, string rid, List<string> supportedRids)
+            string? packageVersion, string? rid, List<string> supportedRids)
         {
             TargetFramework = targetFramework;
             TargetFrameworkShortName = targetFrameworkShortName;

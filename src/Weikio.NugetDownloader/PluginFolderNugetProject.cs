@@ -23,17 +23,17 @@ namespace Weikio.NugetDownloader
         private readonly NuGetFramework _targetFramework;
         private readonly bool _onlyDownload;
         private readonly bool _filterOurRefFiles;
-        private CompatibilityProvider _compProvider;
-        private FrameworkReducer _reducer;
+        private readonly CompatibilityProvider _compProvider;
+        private readonly FrameworkReducer _reducer;
 
-        public string Rid { get; set; }
+        public string? Rid { get; set; }
         public List<string> SupportedRids { get; }
         public List<DllInfo> InstalledDlls { get; } = new List<DllInfo>();
         public List<RunTimeDll> RuntimeDlls { get; } = new List<RunTimeDll>();
         public List<string> InstalledPackages { get; } = new List<string>();
 
         public PluginFolderNugetProject(string root, IPackageSearchMetadata pluginNuGetPackage, NuGetFramework targetFramework, bool onlyDownload = false,
-            string targetRid = null, bool filterOurRefFiles = true) :
+            string? targetRid = null, bool filterOurRefFiles = true) :
             base(root, new PackagePathResolver(root), targetFramework)
         {
             _root = root;
@@ -64,14 +64,13 @@ namespace Weikio.NugetDownloader
 
             InstalledPackages.Add(packageIdentity.ToString());
 
-            using (var zipArchive = new ZipArchive(downloadResourceResult.PackageStream))
-            {
-                var zipArchiveEntries = zipArchive.Entries
-                    .Where(e => e.Name.EndsWith(".dll") || e.Name.EndsWith(".exe")).ToList();
+            using var zipArchive = new ZipArchive(downloadResourceResult.PackageStream);
 
-                await HandleManagedDlls(packageIdentity, zipArchiveEntries);
-                HandleRuntimeDlls(packageIdentity, zipArchiveEntries);
-            }
+            var zipArchiveEntries = zipArchive.Entries
+                .Where(e => e.Name.EndsWith(".dll") || e.Name.EndsWith(".exe")).ToList();
+
+            await HandleManagedDlls(packageIdentity, zipArchiveEntries);
+            HandleRuntimeDlls(packageIdentity, zipArchiveEntries);
 
             return result;
         }
@@ -84,19 +83,18 @@ namespace Weikio.NugetDownloader
 
             foreach (var runtime in runtimeEntries)
             {
-                var runtimeDll = new RunTimeDll()
+                var runtimeDllDetails = ParseRuntimeDllDetails(runtime.Entry.FullName);
+                var runtimeDll = new RunTimeDll
                 {
                     FileName = runtime.Entry.Name,
                     FullFilePath = Path.Combine(_root, packageIdentity.ToString(), runtime.Entry.FullName),
                     RelativeFilePath = Path.Combine(packageIdentity.ToString(), runtime.Entry.FullName),
                     PackageIdentity = packageIdentity.Id,
+                    RID = runtimeDllDetails.Rid,
+                    TargetFramework = runtimeDllDetails.Target,
+                    TargetFrameworkShortName = runtimeDllDetails.TargetShortName,
+                    TargetVersion = runtimeDllDetails.TargetVersion
                 };
-
-                var runtimeDllDetails = ParseRuntimeDllDetails(runtime.Entry.FullName);
-                runtimeDll.RID = runtimeDllDetails.Rid;
-                runtimeDll.TargetFramework = runtimeDllDetails.Target;
-                runtimeDll.TargetFrameworkShortName = runtimeDllDetails.TargetShortName;
-                runtimeDll.TargetVersion = runtimeDllDetails.TargetVersion;
 
                 RuntimeDlls.Add(runtimeDll);
             }
@@ -197,7 +195,7 @@ namespace Weikio.NugetDownloader
 
                 foreach (var e in matchingEntries)
                 {
-                    ZipFileExtensions.ExtractToFile(e.Entry, Path.Combine(_root, e.Entry.Name), overwrite: true);
+                    e.Entry.ExtractToFile(Path.Combine(_root, e.Entry.Name), overwrite: true);
 
                     var installedDllInfo = new DllInfo
                     {
@@ -222,7 +220,7 @@ namespace Weikio.NugetDownloader
             }
         }
 
-        private (string Rid, string Target, string TargetShortName, string TargetVersion) ParseRuntimeDllDetails(string path)
+        private (string Rid, string Target, string? TargetShortName, string? TargetVersion) ParseRuntimeDllDetails(string path)
         {
             var parts = path.Split('/');
             var rid = parts[1];
@@ -243,21 +241,17 @@ namespace Weikio.NugetDownloader
             return (rid, tf.DotNetFrameworkName, libPath, tf.Version.ToString());
         }
 
-        private List<string> GetSupportedRids(string targetRid)
+        private List<string> GetSupportedRids(string? targetRid)
         {
             Rid = string.IsNullOrWhiteSpace(targetRid) ? Microsoft.DotNet.PlatformAbstractions.RuntimeEnvironment.GetRuntimeIdentifier() : targetRid;
 
             var dependencyContext = DependencyContext.Default;
 
-            var fallbacks = dependencyContext.RuntimeGraph.Single(x =>
+            var fallbacks = dependencyContext?.RuntimeGraph.Single(x =>
                 string.Equals(x.Runtime, Rid, StringComparison.InvariantCultureIgnoreCase));
 
             var result = new List<string> { Rid };
-
-            foreach (var runtimeFallback in fallbacks.Fallbacks)
-            {
-                result.Add(runtimeFallback);
-            }
+            result.AddRange((fallbacks?.Fallbacks ?? Array.Empty<string>())!);
 
             return result;
         }
@@ -274,24 +268,24 @@ namespace Weikio.NugetDownloader
         }
     }
 
-    public class DllInfo
+    public record DllInfo
     {
-        public string PackageIdentity { get; set; }
-        public string FileName { get; set; }
-        public string RelativeFilePath { get; set; }
-        public string FullFilePath { get; set; }
-        public string TargetFrameworkName { get; set; }
-        public string TargetFrameworkShortName { get; set; }
-        public string TargetVersion { get; set; }
+        public string PackageIdentity { get; init; } = null!;
+        public string FileName { get; init; } = null!;
+        public string RelativeFilePath { get; init; } = null!;
+        public string FullFilePath { get; init; } = null!;
+        public string TargetFrameworkName { get; init; } = null!;
+        public string TargetFrameworkShortName { get; init; } = null!;
+        public string TargetVersion { get; init; } = null!;
     }
 
     public class RunTimeDll
     {
-        public string PackageIdentity { get; set; }
-        public string FileName { get; set; }
-        public string RelativeFilePath { get; set; }
-        public string FullFilePath { get; set; }
-        public string RID { get; set; }
+        public string PackageIdentity { get; init; } = null!;
+        public string FileName { get; init; } = null!;
+        public string RelativeFilePath { get; init; } = null!;
+        public string FullFilePath { get; init; } = null!;
+        public string RID { get; init; } = null!;
 
         public bool IsNative
         {
@@ -309,9 +303,9 @@ namespace Weikio.NugetDownloader
             }
         }
 
-        public string TargetFramework { get; set; }
-        public string TargetFrameworkShortName { get; set; }
-        public string TargetVersion { get; set; }
+        public string TargetFramework { get; init; } = null!;
+        public string? TargetFrameworkShortName { get; init; }
+        public string? TargetVersion { get; set; }
         public bool IsSupported { get; set; }
         public bool IsRecommended { get; set; }
     }
