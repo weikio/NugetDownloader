@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFrameworks>netcoreapp3.1;net6.0</TargetFrameworks>
+    <TargetFramework>net8.0</TargetFramework>
     <IsPackable>true</IsPackable>
     <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
     <Description>Tool for downloading and installing NuGet packages from .NET.</Description>
@@ -16,13 +16,12 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="NuGet.PackageManagement" Version="5.9.1" />
-    <PackageReference Include="NuGet.Packaging.Core" Version="5.9.1" />
-    <PackageReference Include="NuGet.ProjectModel" Version="5.9.1" />
-    <PackageReference Include="NuGet.Protocol" Version="5.9.1" />
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="3.1.6" />
-    <PackageReference Include="Microsoft.Extensions.DependencyModel" Version="3.1.6"/>
-    <PackageReference Include="Microsoft.DotNet.PlatformAbstractions" Version="3.1.6" />
+    <PackageReference Include="NuGet.PackageManagement" Version="6.9.1" />
+    <PackageReference Include="NuGet.Packaging.Core" Version="6.9.1" />
+    <PackageReference Include="NuGet.ProjectModel" Version="6.9.1" />
+    <PackageReference Include="NuGet.Protocol" Version="6.9.1" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="8.0.1" />
+    <PackageReference Include="Microsoft.Extensions.DependencyModel" Version="8.0.0"/>
   </ItemGroup>
   
 </Project>

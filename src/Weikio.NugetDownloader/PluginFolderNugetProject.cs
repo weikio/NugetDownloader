@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyModel;
@@ -245,19 +246,26 @@ namespace Weikio.NugetDownloader
 
         private List<string> GetSupportedRids(string targetRid)
         {
-            Rid = string.IsNullOrWhiteSpace(targetRid) ? Microsoft.DotNet.PlatformAbstractions.RuntimeEnvironment.GetRuntimeIdentifier() : targetRid;
+            Rid = string.IsNullOrWhiteSpace(targetRid) ? RuntimeInformation.RuntimeIdentifier : targetRid;
 
             var dependencyContext = DependencyContext.Default;
 
-            var fallbacks = dependencyContext.RuntimeGraph.Single(x =>
-                string.Equals(x.Runtime, Rid, StringComparison.InvariantCultureIgnoreCase));
-
             var result = new List<string> { Rid };
 
-            foreach (var runtimeFallback in fallbacks.Fallbacks)
+            if (dependencyContext == null)
             {
-                result.Add(runtimeFallback);
+                return result;
             }
+
+            var fallbacks = dependencyContext.RuntimeGraph.FirstOrDefault(x =>
+                string.Equals(x.Runtime, Rid, StringComparison.InvariantCultureIgnoreCase));
+
+            if (fallbacks == null)
+            {
+                return result;
+            }
+
+            result.AddRange(fallbacks.Fallbacks);
 
             return result;
         }
